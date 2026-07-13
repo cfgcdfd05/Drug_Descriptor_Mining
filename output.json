@@ -1,0 +1,35 @@
+{
+  "drugbank_id": "DB00161",
+  "secondary_accession_numbers": [
+    "PubChem CID: 6287",
+    "IUPAC: (2S)-2-amino-3-methylbutanoic acid"
+  ],
+  "common_name": "L-valine",
+  "cas_number": "72-19-5",
+  "unii": "9G3T9ABPZQ",
+  "synonyms": [
+    "Valine",
+    "L-Valine",
+    "(S)-Valine"
+  ],
+  "smiles": "NC(C(C)C)C(=O)O",
+  "net_formal_charge": 0,
+  "molecular_formula": "C5H11NO2",
+  "molecular_composition": {
+    "C": 0.5126,
+    "H": 0.0946,
+    "N": 0.1196,
+    "O": 0.2732
+  },
+  "molecular_weight": 117.15,
+  "exact_mol_weight": 117.1145,
+  "number_of_atoms": 8,
+  "num_h_acceptors_lipinski": 3,
+  "num_h_donors_lipinski": 2,
+  "num_rotatable_bonds": 2,
+  "num_h_acceptors": 3,
+  "num_h_donors": 2,
+  "alogp": -1.115,
+  "molecular_polar_surface_area": 69.15,
+  "cid": 6287
+}

@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Drug Property Extraction Pipeline</title>
+<style>
+  :root {
+    --bg: #111110;
+    --border-dash: rgba(222,220,209,0.18);
+    --text-primary: #d3d1c7;
+    --text-secondary: #b9b7b1;
+    --text-muted: #b4b4a4;
+    --infra-fill: #444441;    --infra-stroke: #b4b2a9;
+    --llm-fill: #2e2a6e;      --llm-stroke: #aaa9ec;    --llm-text: #cecbf6; --llm-sub: #afa9ec;
+    --fusion-fill: #084038;   --fusion-stroke: #5dcaa5; --fusion-text: #9fe1cb;
+    --guard-fill: #5c2310;    --guard-stroke: #f09979;  --guard-text: #f5c4b3;
+    --output-fill: #1e470a;   --output-stroke: #97c459; --output-text: #c0dd97;
+    --arrow-color: #9c9a92;
+    --panel-bg: #161615;
+    --panel-border: rgba(222,220,209,0.12);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Layout shell ── */
+  .layout {
+    display: flex;
+    min-height: 100vh;
+    transition: all 0.3s ease;
+  }
+
+  .left-col {
+    flex: 1;
+    padding: 32px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: padding 0.3s ease;
+    min-width: 0;
+  }
+
+  /* ── Modal backdrop ── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.52);
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.24s ease;
+    cursor: pointer;
+  }
+  .modal-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ── Liquid glass modal ── */
+  .detail-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -48%) scale(0.96);
+    width: min(580px, 88vw);
+    max-height: 80vh;
+    z-index: 101;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease, transform 0.28s cubic-bezier(.34,1.2,.64,1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 18px;
+    background: rgba(13, 13, 11, 0.14);
+    backdrop-filter: blur(10px) saturate(160%) brightness(110%);
+    -webkit-backdrop-filter: blur(36px) saturate(160%) brightness(110%);
+    border: 1px solid rgba(255,255,255,0.11);
+    box-shadow:
+      inset 0 1.5px 0 rgba(255,255,255,0.16),
+      inset 0 -1px 0 rgba(255,255,255,0.04),
+      inset 1px 0 0 rgba(255,255,255,0.05),
+      inset -1px 0 0 rgba(255,255,255,0.05),
+      0 32px 72px rgba(0,0,0,0.72),
+      0 10px 26px rgba(0,0,0,0.48);
+  }
+  .detail-panel.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  .panel-inner {
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    padding: 28px 26px 40px;
+    opacity: 0;
+    transition: opacity 0.18s ease 0.08s;
+  }
+  .detail-panel.open .panel-inner { opacity: 1; }
+
+  .panel-close {
+    position: absolute;
+    top: 16px; right: 16px;
+    width: 28px; height: 28px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+    transition: background 0.15s;
+    z-index: 10;
+  }
+  .panel-close:hover { background: rgba(255,255,255,0.12); }
+
+  .panel-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-family: 'SF Mono','Fira Code',monospace;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .panel-title {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 6px;
+  }
+  .panel-subtitle {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    line-height: 1.6;
+  }
+
+  .panel-section {
+    margin-bottom: 20px;
+  }
+  .panel-section-title {
+    font-size: 10px;
+    font-family: 'SF Mono','Fira Code',monospace;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .panel-section p {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.65;
+    margin-bottom: 6px;
+  }
+  .panel-section p:last-child { margin-bottom: 0; }
+  .panel-section code {
+    font-family: 'SF Mono','Fira Code',monospace;
+    font-size: 11px;
+    background: rgba(255,255,255,0.07);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: #d3d1c7;
+  }
+
+  .detail-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 7px;
+    align-items: flex-start;
+  }
+  .detail-row .label {
+    font-family: 'SF Mono','Fira Code',monospace;
+    font-size: 10.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    padding-top: 1px;
+    min-width: 100px;
+  }
+  .detail-row .value {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .code-block {
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: 'SF Mono','Fira Code',monospace;
+    font-size: 11px;
+    color: #b8b6ae;
+    line-height: 1.6;
+    margin-top: 6px;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 4px;
+  }
+  .pill {
+    font-size: 10.5px;
+    font-family: 'SF Mono','Fira Code',monospace;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-secondary);
+    background: rgba(255,255,255,0.04);
+  }
+
+  .warn-box {
+    background: rgba(92,35,16,0.3);
+    border: 1px solid rgba(240,153,123,0.25);
+    border-radius: 6px;
+    padding: 8px 11px;
+    font-size: 11.5px;
+    color: #f5c4b3;
+    line-height: 1.55;
+    margin-top: 6px;
+  }
+  .info-box {
+    background: rgba(46,42,110,0.3);
+    border: 1px solid rgba(170,169,236,0.2);
+    border-radius: 6px;
+    padding: 8px 11px;
+    font-size: 11.5px;
+    color: var(--llm-sub);
+    line-height: 1.55;
+    margin-top: 6px;
+  }
+  .ok-box {
+    background: rgba(8,64,56,0.35);
+    border: 1px solid rgba(93,202,165,0.2);
+    border-radius: 6px;
+    padding: 8px 11px;
+    font-size: 11.5px;
+    color: var(--fusion-text);
+    line-height: 1.55;
+    margin-top: 6px;
+  }
+
+  /* ── Flowchart ── */
+  h1 {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+
+  .pipeline-wrap { position: relative; width: 100%; max-width: 860px; }
+
+  .batch-outline {
+    border: 1px dashed var(--border-dash);
+    border-radius: 14px;
+    padding: 36px 24px 28px;
+    position: relative;
+  }
+  .batch-label {
+    position: absolute; top: -10px; left: 18px;
+    background: var(--bg); padding: 0 8px;
+    font-size: 11px; color: var(--text-muted);
+    font-family: 'SF Mono','Fira Code',monospace;
+  }
+
+  .flow { display: flex; flex-direction: column; align-items: center; }
+
+  /* ── Node ── */
+  .node {
+    width: 100%; max-width: 460px;
+    border-radius: 10px; border: 1px solid;
+    padding: 13px 18px 12px;
+    position: relative;
+    cursor: pointer;
+    transition: filter 0.15s, transform 0.15s, box-shadow 0.15s;
+    user-select: none;
+  }
+  .node:hover {
+    filter: brightness(1.18);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  .node.active {
+    filter: brightness(1.25);
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.2), 0 4px 24px rgba(0,0,0,0.5);
+  }
+  .node.simple:hover { filter: brightness(1.08); }
+
+  /* click hint */
+  .click-hint {
+    position: absolute;
+    top: 9px; right: 10px;
+    font-size: 9.5px;
+    font-family: 'SF Mono','Fira Code',monospace;
+    color: rgba(255,255,255,0.22);
+    letter-spacing: 0.03em;
+    pointer-events: none;
+  }
+  .node:hover .click-hint { color: rgba(255,255,255,0.5); }
+  .node.active .click-hint { display: none; }
+
+  .node-title {
+    font-size: 13.5px; font-weight: 600;
+    margin-bottom: 3px;
+  }
+  .node-sub {
+    font-size: 11.5px; opacity: 0.82; line-height: 1.5;
+  }
+  .node-details { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag {
+    font-size: 10.5px; font-family: 'SF Mono','Fira Code',monospace;
+    padding: 2px 7px; border-radius: 4px; opacity: 0.85;
+  }
+
+  .node-infra  { background: var(--infra-fill);  border-color: var(--infra-stroke); }
+  .node-infra  .node-title { color: #d3d1c7; }
+  .node-infra  .node-sub   { color: var(--text-secondary); }
+  .node-infra  .tag        { background: rgba(180,178,169,0.12); color: var(--infra-stroke); }
+
+  .node-llm    { background: var(--llm-fill);    border-color: var(--llm-stroke); }
+  .node-llm    .node-title { color: var(--llm-text); }
+  .node-llm    .node-sub   { color: var(--llm-sub); }
+  .node-llm    .tag        { background: rgba(100,95,210,0.18); color: var(--llm-text); }
+
+  .node-fusion { background: var(--fusion-fill); border-color: var(--fusion-stroke); }
+  .node-fusion .node-title { color: var(--fusion-text); }
+  .node-fusion .node-sub   { color: var(--fusion-stroke); }
+  .node-fusion .tag        { background: rgba(93,202,165,0.12); color: var(--fusion-text); }
+
+  .node-guard  { background: var(--guard-fill);  border-color: var(--guard-stroke); }
+  .node-guard  .node-title { color: var(--guard-text); }
+  .node-guard  .node-sub   { color: var(--guard-stroke); }
+  .node-guard  .tag        { background: rgba(240,153,123,0.12); color: var(--guard-text); }
+
+  .node-output { background: var(--output-fill); border-color: var(--output-stroke); }
+  .node-output .node-title { color: var(--output-text); }
+  .node-output .node-sub   { color: var(--output-stroke); }
+
+  .llm-badge {
+    position: absolute; top: 10px; right: 10px;
+    font-size: 10px; font-family: 'SF Mono','Fira Code',monospace;
+    background: rgba(100,95,210,0.22); color: var(--llm-text);
+    border: 1px solid rgba(170,169,236,0.3);
+    border-radius: 4px; padding: 2px 7px;
+  }
+
+  /* ── Arrow ── */
+  .arrow {
+    width: 2px; height: 30px;
+    background: linear-gradient(to bottom, var(--arrow-color), rgba(156,154,146,0.3));
+    position: relative; align-self: center; flex-shrink: 0;
+  }
+  .arrow::after {
+    content: ''; position: absolute; bottom: -6px; left: 50%;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent; border-right: 5px solid transparent;
+    border-top: 7px solid var(--arrow-color);
+  }
+
+  /* ── Annotation rows ── */
+  .row-with-annotation {
+    width: 100%; display: flex; align-items: center;
+    justify-content: center; gap: 14px;
+  }
+  .annotation { width: 185px; flex-shrink: 0; }
+  .annotation-box {
+    border-radius: 7px; border: 1px solid;
+    padding: 8px 11px; font-size: 11px; line-height: 1.5;
+  }
+  .annotation-empty { width: 185px; flex-shrink: 0; }
+  .ann-llm   { border-color: rgba(170,169,236,0.3); background: rgba(46,42,110,0.35);  color: var(--llm-sub); }
+  .ann-guard { border-color: rgba(240,153,123,0.3); background: rgba(92,35,16,0.35);   color: var(--guard-stroke); }
+  .ann-infra { border-color: rgba(180,178,169,0.25); background: rgba(68,68,65,0.3);   color: var(--text-secondary); }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex; gap: 18px; flex-wrap: wrap; justify-content: center;
+    margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border-dash);
+  }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-secondary); }
+  .legend-dot  { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+
+  .footer-note {
+    margin-top: 20px; font-size: 11px; color: var(--text-muted);
+    text-align: center; line-height: 1.6;
+  }
+
+  /* scrollbar */
+  .panel-inner::-webkit-scrollbar { width: 5px; }
+  .panel-inner::-webkit-scrollbar-track { background: transparent; }
+  .panel-inner::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="layout" id="layout">
+
+  <!-- ══════════════ LEFT: FLOWCHART ══════════════ -->
+  <div class="left-col">
+    <h1>LLM-Accelerated Drug Property Extraction Pipeline</h1>
+
+    <div class="pipeline-wrap">
+      <div class="batch-outline">
+        <span class="batch-label">Generate_drugbank.py · run_pipeline()</span>
+
+        <div class="flow">
+
+          <!-- NODE 1: INPUT (simple) -->
+          <div class="row-with-annotation">
+            <div class="annotation-empty"></div>
+            <div class="node node-infra simple" data-node="input" onclick="openPanel('input')">
+              <span class="click-hint">click</span>
+              <div class="node-title">Drug name or CID input</div>
+              <div class="node-sub">Accepts common name, IUPAC name, or PubChem CID integer</div>
+            </div>
+            <div class="annotation-empty"></div>
+          </div>
+
+          <div class="arrow"></div>
+
+          <!-- NODE 2: CID RESOLUTION -->
+          <div class="row-with-annotation">
+            <div class="annotation">
+              <div class="annotation-box ann-infra">
+                <strong style="font-size:10.5px;">PubChem REST API</strong><br>
+                Name → <code>/compound/name/{q}/cids</code><br>
+                CID → IUPAC + synonym lookup<br>
+                <span style="opacity:0.7;">5 retries · 5s backoff</span>
+              </div>
+            </div>
+            <div class="node node-infra" data-node="cid" onclick="openPanel('cid')">
+              <span class="click-hint">click for details</span>
+              <div class="node-title">CID Resolution</div>
+              <div class="node-sub">Bidirectional: name → CID or CID → common name.<br>Enriches label with IUPAC hint when both differ.</div>
+              <div class="node-details">
+                <span class="tag">fetch_cid()</span>
+                <span class="tag">fetch_name_from_cid()</span>
+                <span class="tag">defaults to CID 0</span>
+              </div>
+            </div>
+            <div class="annotation-empty"></div>
+          </div>
+
+          <div class="arrow"></div>
+
+          <!-- NODE 3: LLM1 -->
+          <div class="row-with-annotation">
+            <div class="annotation">
+              <div class="annotation-box ann-llm">
+                <strong style="font-size:10.5px;">Formula/MW pre-injection</strong><br>
+                PubChem structural data fetched first<br>
+                and injected at confidence = 1.0<br>
+                to anchor numeric descriptors
+              </div>
+            </div>
+            <div class="node node-llm" data-node="llm1" onclick="openPanel('llm1')">
+              <span class="llm-badge">Qwen3:32b · temp 0.5</span>
+              <div class="node-title">LLM1 — Multi-candidate extraction</div>
+              <div class="node-sub">Per-field <code>{value, confidence, source_type}</code> candidate lists.<br>Min 2 candidates per numeric field from distinct sources.</div>
+              <div class="node-details">
+                <span class="tag">pubchem</span><span class="tag">chembl</span>
+                <span class="tag">drugbank</span><span class="tag">bindingdb</span>
+                <span class="tag">literature</span>
+              </div>
+            </div>
+            <div class="annotation-empty"></div>
+          </div>
+
+          <div class="arrow"></div>
+
+          <!-- NODE 4: FUSION -->
+          <div class="row-with-annotation">
+            <div class="annotation-empty"></div>
+            <div class="node node-fusion" data-node="fusion" onclick="openPanel('fusion')">
+              <span class="click-hint">click for details</span>
+              <div class="node-title">Fusion — Typed per-field resolution</div>
+              <div class="node-sub">Dispatches each field by <code>FIELD_TYPES</code>. Source-priority boosts PubChem/DrugBank. Outlier removal via deviation thresholds.</div>
+              <div class="node-details">
+                <span class="tag">float → weighted mean</span>
+                <span class="tag">int → weighted mode</span>
+                <span class="tag">str → eff-conf winner</span>
+                <span class="tag">list → dedup merge</span>
+                <span class="tag">smiles → best-conf</span>
+                <span class="tag">composition → per-element</span>
+              </div>
+            </div>
+            <div class="annotation">
+              <div class="annotation-box ann-infra">
+                <strong style="font-size:10.5px;">Plausibility gates</strong><br>
+                Floor + ceiling bounds per field<br>
+                Consensus hallucination detect<br>
+                <span style="opacity:0.7;">(off for deterministic fields)</span><br>
+                Confidence caps per field type
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow"></div>
+
+          <!-- NODE 5: LLM2 -->
+          <div class="row-with-annotation">
+            <div class="annotation">
+              <div class="annotation-box ann-llm">
+                <strong style="font-size:10.5px;">Gap-fill rules</strong><br>
+                Copy non-default fused values exactly<br>
+                Fill only if confident — wrong ID<br>
+                is worse than empty string<br>
+                <span style="opacity:0.7;">CAS: preserved, no substitution</span>
+              </div>
+            </div>
+            <div class="node node-llm" data-node="llm2" onclick="openPanel('llm2')">
+              <span class="llm-badge">Qwen3:32b · temp 0.1</span>
+              <div class="node-title">LLM2 — Gap-fill &amp; verification</div>
+              <div class="node-sub">Receives fused intermediate. Fills genuinely empty fields, cross-checks composition fractions and heavy-atom count. Emits warnings for corrections.</div>
+              <div class="node-details">
+                <span class="tag">number_of_atoms cross-check</span>
+                <span class="tag">composition renormalise</span>
+                <span class="tag">exact≠average MW check</span>
+              </div>
+            </div>
+            <div class="annotation-empty"></div>
+          </div>
+
+          <div class="arrow"></div>
+
+          <!-- NODE 6: POST-PROCESSING -->
+          <div class="row-with-annotation">
+            <div class="annotation-empty"></div>
+            <div class="node node-guard" data-node="postproc" onclick="openPanel('postproc')">
+              <span class="click-hint">click for details</span>
+              <div class="node-title">Post-processing guards</div>
+              <div class="node-sub">Deterministic recomputation from <code>molecular_formula</code> overrides LLM noise. Fused numerics restored if LLM2 changed them silently.</div>
+              <div class="node-details">
+                <span class="tag">formula → MW / exact MW</span>
+                <span class="tag">formula → HAC</span>
+                <span class="tag">formula → composition</span>
+                <span class="tag">SMILES atom-count check</span>
+                <span class="tag">int-type enforcement</span>
+                <span class="tag">secondary accession dedup</span>
+              </div>
+            </div>
+            <div class="annotation">
+              <div class="annotation-box ann-guard">
+                <strong style="font-size:10.5px;">SMILES fallback</strong><br>
+                Mismatch vs heavy-atom count<br>
+                → SMILES cleared, formula count<br>
+                kept as authoritative.<br>
+                No RDKit — bracket balance +<br>
+                atom token validation only.
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow"></div>
+
+          <!-- NODE 7: OUTPUT (simple) -->
+          <div class="row-with-annotation">
+            <div class="annotation-empty"></div>
+            <div class="node node-output simple" data-node="output" onclick="openPanel('output')">
+              <span class="click-hint">click</span>
+              <div class="node-title" style="text-align:center;">Final record → CSV row</div>
+              <div class="node-sub" style="text-align:center;">23 fields flattened · list fields expanded to indexed columns<br>(Secondary_Accession_1/2 · Synonym_1/2/3 · composition as string)</div>
+            </div>
+            <div class="annotation-empty"></div>
+          </div>
+
+        </div><!-- /.flow -->
+
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--llm-fill);border:1px solid var(--llm-stroke)"></div>Qwen3:32b</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--fusion-fill);border:1px solid var(--fusion-stroke)"></div>Fusion</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--guard-fill);border:1px solid var(--guard-stroke)"></div>Guards</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--infra-fill);border:1px solid var(--infra-stroke)"></div>Infrastructure</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--output-fill);border:1px solid var(--output-stroke)"></div>Output</div>
+        </div>
+      </div>
+
+      <div class="footer-note">
+        Generate_drugbank.py · processes up to 50 CIDs · resumes from last written position<br>
+        Schema: 23 fields · REQUIRED_SCHEMA defaults encode expected types (0 / 0.0 / "" / [] / {})
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ RIGHT: DETAIL PANEL ══════════════ -->
+  <div class="modal-backdrop" id="modalBackdrop"></div>
+  <div class="detail-panel" id="detailPanel">
+    <button class="panel-close" onclick="closePanel()">✕</button>
+    <div class="panel-inner" id="panelInner"></div>
+  </div>
+
+</div><!-- /.layout -->
+
+<script>
+// ── Panel content definitions ──────────────────────────────────────────────
+
+const PANELS = {
+
+  input: {
+    tag: 'INFRASTRUCTURE', tagColor: '#b4b2a9', tagBg: 'rgba(68,68,65,0.5)',
+    title: 'Drug name or CID input',
+    subtitle: 'Entry point for the pipeline. Simple dispatch — no transformation happens here.',
+    simple: true,
+    html: `
+      <div class="panel-section">
+        <div class="panel-section-title">What it does</div>
+        <p>Accepts either a plain text molecule name (<code>ibuprofen</code>, <code>aspirin</code>, IUPAC strings) or a raw integer PubChem CID (<code>2244</code>). The distinction is detected by <code>molecule_input.isdigit()</code> in <code>main.py</code>.</p>
+        <p>That single branch decides whether the pipeline starts by fetching a name for a known CID, or by resolving a name to a CID first.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Two entry paths</div>
+        <div class="detail-row"><div class="label">CID provided</div><div class="value">Skip name lookup. Call <code>fetch_name_from_cid(cid)</code> immediately for enriched label.</div></div>
+        <div class="detail-row"><div class="label">Name provided</div><div class="value">Call <code>fetch_cid(name)</code> → then <code>fetch_name_from_cid(cid)</code> to get IUPAC + common name.</div></div>
+      </div>
+      <div class="info-box">This block is intentionally stateless — it adds no data, only routes the input to CID resolution.</div>
+    `
+  },
+
+  cid: {
+    tag: 'INFRASTRUCTURE', tagColor: '#b4b2a9', tagBg: 'rgba(68,68,65,0.5)',
+    title: 'CID Resolution',
+    subtitle: 'Converts ambiguous text input into a canonical PubChem CID + enriched molecule label. Sets the ground truth identifier the whole pipeline anchors on.',
+    html: `
+      <div class="panel-section">
+        <div class="panel-section-title">Why it matters</div>
+        <p>LLM1 needs a precise molecule label — not just "aspirin" but "aspirin (IUPAC: 2-acetoxybenzoic acid)" — so it anchors extractions to the exact PubChem entry and doesn't hallucinate synonyms for the wrong compound.</p>
+        <p>The CID is also stamped onto the final record and used as the resume key in <code>Generate_drugbank.py</code>.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">API calls made</div>
+        <div class="detail-row"><div class="label">Name → CID</div><div class="value"><code>/rest/pug/compound/name/{q}/cids/JSON</code></div></div>
+        <div class="detail-row"><div class="label">CID → IUPAC</div><div class="value"><code>/rest/pug/compound/cid/{id}/property/IUPACName/JSON</code></div></div>
+        <div class="detail-row"><div class="label">CID → common</div><div class="value"><code>/rest/pug/compound/cid/{id}/synonyms/JSON</code> — first synonym wins</div></div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Label enrichment logic</div>
+        <p>If common name and IUPAC name differ (case-insensitive), the label becomes <code>"{common} (IUPAC: {iupac})"</code>. If only one resolves, that one is used. Passed as the molecule input string into LLM1.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Retry / fault tolerance</div>
+        <div class="detail-row"><div class="label">Retries</div><div class="value">5 attempts per HTTP call</div></div>
+        <div class="detail-row"><div class="label">Backoff</div><div class="value">5s sleep between attempts</div></div>
+        <div class="detail-row"><div class="label">Failure</div><div class="value">CID defaults to <code>0</code>. Pipeline continues with raw input string as molecule name.</div></div>
+      </div>
+      <div class="warn-box">⚠ If CID resolves to 0, downstream fields like <code>molecular_formula</code> won't be pre-injected, making LLM1 the sole source for all descriptors — lower quality.</div>
+    `
+  },
+
+  llm1: {
+    tag: 'Qwen3:32b', tagColor: '#cecbf6', tagBg: 'rgba(46,42,110,0.6)',
+    title: 'LLM1 — Multi-candidate extraction',
+    subtitle: 'The first LLM pass. Its job is breadth: collect multiple independent value candidates per field, each tagged with a confidence score and source type. It does not pick winners — Fusion does that.',
+    html: `
+      <div class="panel-section">
+        <div class="panel-section-title">Output structure</div>
+        <p>Every leaf field is a list of candidate dicts, not a single value. This is the core design that makes Fusion possible:</p>
+        <div class="code-block">// Example for molecular_weight
+"molecular_weight": [
+  {"value": 206.28, "confidence": 0.92, "source_type": "pubchem"},
+  {"value": 206.28, "confidence": 0.88, "source_type": "drugbank"},
+  {"value": 206.3,  "confidence": 0.72, "source_type": "chembl"}
+]</div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Source types (and priority scores)</div>
+        <div class="detail-row"><div class="label">pubchem / drugbank</div><div class="value">Priority 5 — highest trust, structural/registry data</div></div>
+        <div class="detail-row"><div class="label">chembl</div><div class="value">Priority 4</div></div>
+        <div class="detail-row"><div class="label">bindingdb</div><div class="value">Priority 3</div></div>
+        <div class="detail-row"><div class="label">literature</div><div class="value">Priority 2</div></div>
+        <div class="detail-row"><div class="label">other</div><div class="value">Priority 1 — lowest trust</div></div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Confidence guidance in prompt</div>
+        <div class="detail-row"><div class="label">PubChem/DrugBank structural</div><div class="value">0.85–0.95</div></div>
+        <div class="detail-row"><div class="label">ChEMBL</div><div class="value">0.75–0.85</div></div>
+        <div class="detail-row"><div class="label">Literature</div><div class="value">0.60–0.75</div></div>
+        <div class="detail-row"><div class="label">Estimated</div><div class="value">0.40–0.60</div></div>
+        <div class="detail-row"><div class="label">Uncertain</div><div class="value">&lt;0.4 — do not fabricate</div></div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Special field rules in system prompt</div>
+        <p><strong>SMILES:</strong> heavy-atom count must match molecular_formula before submitting. Ibuprofen C₁₃H₁₈O₂ = 15 heavy atoms (13C + 2O). Wrong SMILES → empty string.</p>
+        <p><strong>molecular_composition:</strong> returned as <code>{element: mass_fraction}</code> dict, not a string. Fractions must sum to 1.0 ± 0.005.</p>
+        <p><strong>CAS:</strong> canonical free-acid/free-base form (lowest-numbered accession). Ibuprofen: 15687-27-1, not a salt form.</p>
+        <p><strong>number_of_atoms:</strong> count non-H atoms only from formula. C₁₃H₁₈O₂ → 13+2 = 15, H₁₈ excluded.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Retry / error handling</div>
+        <div class="detail-row"><div class="label">Temperature</div><div class="value">0.5 — increased by 0.1 per JSON-parse retry (up to 1.0)</div></div>
+        <div class="detail-row"><div class="label">Retries</div><div class="value">3 attempts — server error and JSON parse failures both trigger retry</div></div>
+        <div class="detail-row"><div class="label">JSON extraction</div><div class="value">Tries last <code>&#96;&#96;&#96;json</code> block first, falls back to outermost <code>{}</code> match</div></div>
+      </div>
+      <div class="info-box">LLM1 also handles schema unwrapping: if the model wraps all output under a single key (e.g. <code>"properties": {...}</code>), <code>main.py</code> detects and strips the wrapper before passing to Fusion.</div>
+    `
+  },
+
+  fusion: {
+    tag: 'FUSION', tagColor: '#9fe1cb', tagBg: 'rgba(8,64,56,0.6)',
+    title: 'Fusion — Typed per-field resolution',
+    subtitle: 'Pure Python. No LLM. Takes the multi-candidate lists from LLM1 and collapses each field to a single best value using a strategy matched to the field\'s data type.',
+    html: `
+      <div class="panel-section">
+        <div class="panel-section-title">Effective confidence formula</div>
+        <p>Before any strategy runs, each candidate's raw confidence is boosted by its source priority:</p>
+        <div class="code-block">eff = confidence × (1 + 0.1 × (priority − 1))
+// Priority 5 (PubChem/DrugBank) → ×1.4 multiplier
+// Priority 1 (other)             → ×1.0 (no boost)
+// A high-confidence literature value can still beat
+// a low-confidence PubChem one.</div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Consensus hallucination detection</div>
+        <p>If all numeric candidates for a non-deterministic field share the exact same value, the model likely echoed one number rather than independently retrieving data. Effective confidence is capped at 0.5 with a warning.</p>
+        <div class="ok-box">Disabled for deterministic fields like MW since identical values across PubChem/DrugBank/ChEMBL are expected, not suspicious.</div>
+      </div>
+    `
+  },
+
+  llm2: {
+    tag: 'Qwen3:32b', tagColor: '#cecbf6', tagBg: 'rgba(46,42,110,0.6)',
+    title: 'LLM2 — Gap-fill & verification',
+    subtitle: 'The second LLM pass. Temperature 0.1 — near-deterministic. Its job is narrow: fill fields that are still at schema defaults, and cross-check 3 specific consistency rules. It must not alter fused values.',
+    html: `
+      <div class="panel-section">
+        <div class="panel-section-title">Core contract</div>
+        <p>LLM2 receives the fused intermediate dict. The system prompt makes the contract explicit:</p>
+        <div class="code-block">// PRESERVE: copy every non-default numeric exactly
+// (default = 0.0 for floats, 0 for ints).
+// FILL MISSING: only if the value equals its schema
+// default AND you are confident. Else keep default.
+// CAS: preserve fused CAS exactly. Do not substitute.</div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Three cross-checks it must perform</div>
+        <div class="detail-row"><div class="label">① HAC</div><div class="value"><code>number_of_atoms</code> = non-H atom count only. C₁₃H₁₈O₂ → 15 (not 31). Correct + warn if fused value differs.</div></div>
+        <div class="detail-row"><div class="label">② Composition</div><div class="value">If fractions already sum to 1.0 ± 0.005, copy unchanged. Only recompute if outside range. Warn only if changed.</div></div>
+        <div class="detail-row"><div class="label">③ MW vs exact MW</div><div class="value">Monoisotopic ≠ average MW. If they're equal, set <code>exact_mol_weight = null</code> and warn. This catches copy-paste errors from LLM1.</div></div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Integer enforcement</div>
+        <p>LLM2 is explicitly instructed not to produce floats for discrete count fields. The post-processing guard in <code>main.py</code> catches any that slip through regardless:</p>
+        <div class="pill-list">
+          <span class="pill">number_of_atoms</span><span class="pill">net_formal_charge</span>
+          <span class="pill">num_h_acceptors_lipinski</span><span class="pill">num_h_donors_lipinski</span>
+          <span class="pill">num_rotatable_bonds</span>
+        </div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Warnings output</div>
+        <p>LLM2 emits a <code>warnings</code> list in its JSON for every correction or substitution it makes. These are popped from the output in <code>main.py</code> and printed to console — they never appear in the final CSV.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Safety rules for identity fields</div>
+        <div class="detail-row"><div class="label">drugbank_id</div><div class="value">Only fill if 100% certain. Wrong ID is worse than empty string.</div></div>
+        <div class="detail-row"><div class="label">smiles</div><div class="value">Only fill if 100% certain of exact canonical structure. Otherwise empty string.</div></div>
+        <div class="detail-row"><div class="label">secondary_accession</div><div class="value">Must not contain the primary <code>drugbank_id</code> value. Remove duplicates.</div></div>
+      </div>
+      <div class="warn-box">⚠ Despite these instructions, LLM2 can still silently alter fused numerics. The post-processing guard layer in main.py detects and reverts any such changes by comparing LLM2 output against the fused intermediate.</div>
+    `
+  },
+
+  postproc: {
+    tag: 'POST-PROCESSING', tagColor: '#f5c4b3', tagBg: 'rgba(92,35,16,0.6)',
+    title: 'Post-processing guards',
+    subtitle: 'Deterministic Python. The final safety net. Runs after LLM2 and cannot be bypassed. Handles six distinct guard operations, all grounded in the molecular formula as authoritative ground truth.',
+    html: `
+      <div class="panel-section">
+        <div class="panel-section-title">Guard 1 — Deterministic recomputation</div>
+        <p>When <code>molecular_formula</code> is present, four fields are recomputed from it and override any LLM-supplied value if the stored value is at default (0/0.0/{}) or deviates beyond tolerance:</p>
+        <div class="code-block">ATOMIC_MASS    = {"C":12.0107, "H":1.00794, "O":15.9994, ...}
+MONOISOTOPIC   = {"C":12.0000, "H":1.007825, ...}
+
+molecular_weight   ← Σ(atom_count × ATOMIC_MASS[elem])
+exact_mol_weight   ← Σ(atom_count × MONOISOTOPIC[elem])
+number_of_atoms    ← Σ(atom_count for elem ≠ "H")
+molecular_composition ← {elem: (n×mass)/MW for each elem}</div>
+        <p>Override threshold: relative deviation &gt; 0.5% for floats, any integer mismatch for counts.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Guard 2 — LLM2 numeric revert</div>
+        <p>Walks all numeric paths in REQUIRED_SCHEMA. For each field where the fused value was non-default, checks if LLM2 changed it. If so, restores the fused value and logs a <code>[GUARD]</code> message:</p>
+        <div class="code-block">// Checks: existing is None, or differs from fused_val
+// beyond rel_tol=1e-6 for floats, exact match for ints
+→ "[GUARD] LLM2 changed {field} from X → Y — restoring"</div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Guard 3 — String field revert</div>
+        <p>For non-fillable string fields (i.e., <code>smiles</code>, <code>molecular_formula</code>), if the fused value was non-empty and LLM2 changed it, the fused value is restored. Identity fields (<code>drugbank_id</code>, <code>cas_number</code>, <code>synonyms</code>…) are exempted — LLM2 is allowed to fill those.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Guard 4 — SMILES validation</div>
+        <p>Without RDKit, validates SMILES via three checks:</p>
+        <div class="detail-row"><div class="label">1. Legal chars</div><div class="value">Regex: only <code>[A-Za-z0-9@+\-=#$%[]()./\\:]</code></div></div>
+        <div class="detail-row"><div class="label">2. Balance</div><div class="value">Parentheses <code>()</code> and brackets <code>[]</code> must be matched</div></div>
+        <div class="detail-row"><div class="label">3. Atom tokens</div><div class="value">Every alphabetic token must be a known atom symbol (VALID_ATOMS set). Two-letter symbols like Cl, Br parsed first.</div></div>
+        <p style="margin-top:8px;">Then, heavy atom count in the SMILES is compared to <code>number_of_atoms</code>. Mismatch → SMILES cleared, formula-derived count kept.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Guard 5 — Integer type enforcement</div>
+        <p>Last-resort pass. Rounds any float value stored in an integer-typed field back to int:</p>
+        <div class="code-block">// Catches: num_rotatable_bonds = 3.2857
+// Rounds → 3, logs [INT-GUARD]</div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Guard 6 — Secondary accession dedup</div>
+        <p>Removes any entry from <code>secondary_accession_numbers</code> that matches <code>drugbank_id</code> (case-insensitive). Runs here as a second pass after Fusion already did it once.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Composition validation</div>
+        <p>Separate check: if <code>molecular_composition</code> fractions sum outside 1.0 ± 0.01, renormalizes in place. If it's a legacy string format (e.g. <code>"C: 0.600, H: 0.045"</code>), clears it so it gets recomputed from formula.</p>
+      </div>
+      <div class="ok-box">After all guards pass, unresolved numeric fields are marked <code>null</code> (not 0). This distinguishes "unknown" from "zero" in the final output.</div>
+    `
+  },
+
+  output: {
+    tag: 'OUTPUT', tagColor: '#c0dd97', tagBg: 'rgba(30,71,10,0.6)',
+    title: 'Final record → CSV row',
+    subtitle: 'The flattened output written to Drugbank_Generated.csv by Generate_drugbank.py.',
+    simple: true,
+    html: `
+      <div class="panel-section">
+        <div class="panel-section-title">Field count & flattening</div>
+        <p>The schema's 23 logical fields are expanded to a flat CSV row. List fields become indexed columns:</p>
+        <div class="code-block">secondary_accession_numbers → Secondary_Accession_1, _2
+synonyms                    → Synonym_1, Synonym_2, Synonym_3
+molecular_composition       → single cell: "C: 0.6008, H: 0.0446, O: 0.3546"</div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Resume logic</div>
+        <p><code>Generate_drugbank.py</code> reads existing CIDs from the output file on startup. Already-processed CIDs are skipped. New rows are appended (mode <code>"a"</code>). Each row is flushed to disk immediately after write.</p>
+      </div>
+      <div class="panel-section">
+        <div class="panel-section-title">Error handling per row</div>
+        <p>If <code>run_pipeline()</code> throws for a CID, a row with that CID and all other fields empty is written anyway, so the resume index stays consistent.</p>
+      </div>
+    `
+  }
+};
+
+// ── Panel open / close ─────────────────────────────────────────────────────
+
+let currentNode = null;
+
+function openPanel(nodeId) {
+  const data = PANELS[nodeId];
+  if (!data) return;
+
+  // Toggle: click same node again to close
+  if (currentNode === nodeId) {
+    closePanel();
+    return;
+  }
+
+  // Deactivate previous
+  if (currentNode) {
+    const prev = document.querySelector(`[data-node="${currentNode}"]`);
+    if (prev) prev.classList.remove('active');
+  }
+
+  // Activate current
+  currentNode = nodeId;
+  const el = document.querySelector(`[data-node="${nodeId}"]`);
+  if (el) el.classList.add('active');
+
+  const panel = document.getElementById('detailPanel');
+  const inner = document.getElementById('panelInner');
+  const backdrop = document.getElementById('modalBackdrop');
+
+  inner.innerHTML = `
+    <span class="panel-tag" style="color:${data.tagColor};background:${data.tagBg};border:1px solid ${data.tagColor}33;">${data.tag}</span>
+    ${data.simple ? '<span style="font-size:10px;color:#5a5a55;margin-left:8px;font-family:monospace;">simple block</span>' : ''}
+    <div class="panel-title" style="color:${data.tagColor}">${data.title}</div>
+    <div class="panel-subtitle">${data.subtitle}</div>
+    ${data.html}
+  `;
+
+  panel.classList.add('open');
+  backdrop.classList.add('open');
+  inner.scrollTop = 0;
+}
+
+function closePanel() {
+  if (currentNode) {
+    const prev = document.querySelector(`[data-node="${currentNode}"]`);
+    if (prev) prev.classList.remove('active');
+    currentNode = null;
+  }
+  document.getElementById('detailPanel').classList.remove('open');
+  document.getElementById('modalBackdrop').classList.remove('open');
+}
+
+// Close on Escape or backdrop click
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
+document.getElementById('modalBackdrop').addEventListener('click', closePanel);
+</script>
+</body>
+</html>
