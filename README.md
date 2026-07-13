@@ -1,8 +1,8 @@
-# Biomedical Property Reconstruction Pipeline — Groq Branch
+# Biomedical Property Reconstruction Pipeline
 
 An automated three-tier pipeline that extracts, fuses, and verifies physicochemical and pharmacological descriptors for small molecules from scientific literature and public databases. Uses a **hybrid LLM → Code → LLM** architecture: broad LLM extraction, deterministic mathematical fusion, and LLM-based plausibility verification.
 
-> **Branch note:** This branch uses the [Groq](https://console.groq.com) inference API (`llama-3.3-70b-versatile`) for both LLM layers. Authentication requires a `groq_token` in `.env`.
+> **Note:** Runs fully local via [Ollama](https://ollama.com) using `deepseek-r1:70b` for both LLM layers. No API key or `.env` required. Tested on dual RTX 4090 (48GB VRAM).
 
 ---
 
@@ -15,11 +15,11 @@ An automated three-tier pipeline that extracts, fuses, and verifies physicochemi
   PubChem API — resolves CID; enriches with IUPAC + common name
          │
          ▼
-  LAYER 1 — LLM1 (LLM1_groq.py)
-  Model: llama-3.3-70b-versatile (Groq), temperature=0.5
+  LAYER 1 — LLM1 (LLM1.py)
+  Model: deepseek-r1:70b (Ollama, local), temperature=0.0
   • Emits every candidate value found — never resolves conflicts
   • Each leaf → list of {value, confidence (0–1), source_type}
-  • Retries up to 3×; temperature nudged +0.1 on malformed JSON
+  • Retries up to 3×; num_predict scales +1024 per retry on malformed JSON
          │
          ▼
   LAYER 2 — Deterministic Fusion (fusion.py)
@@ -34,11 +34,11 @@ An automated three-tier pipeline that extracts, fuses, and verifies physicochemi
     composition→per-element float fusion + renormalisation
          │
          ▼
-  LAYER 3 — LLM2 (LLM2_groq.py)
-  Model: llama-3.3-70b-versatile (Groq), temperature=0.1
+  LAYER 3 — LLM2 (LLM2.py)
+  Model: deepseek-r1:70b (Ollama, local), temperature=0.0
   • Verifies biological plausibility; fills missing string fields
   • Must NOT silently alter any fused numeric value
-  • Retries up to 3× on server error or malformed JSON
+  • Retries up to 4× on malformed JSON; num_predict scales +1024 per retry (capped at 5120)
          │
          ▼
   main.py guard layer
@@ -62,16 +62,16 @@ An automated three-tier pipeline that extracts, fuses, and verifies physicochemi
 ```
 .
 ├── main.py               # Orchestrator and entry point
-├── LLM1_groq.py          # Layer 1 — multi-candidate extraction (Groq)
+├── LLM1.py               # Layer 1 — multi-candidate extraction (Ollama, deepseek-r1:70b)
 ├── fusion.py             # Layer 2 — deterministic type-aware fusion engine
 ├── fusion_config.py      # All mathematical thresholds (no code changes needed)
-├── LLM2_groq.py          # Layer 3 — plausibility verification (Groq)
+├── LLM2.py               # Layer 3 — plausibility verification (Ollama, deepseek-r1:70b)
 ├── drug_descriptors.py   # Schema, field types, source priorities, deterministic field sets
 ├── Generate_drugbank.py  # Batch runner: processes Drugbank.csv → Drugbank_Generated.csv
 ├── db2csv.py             # Utility: resolves DrugBank IDs → PubChem CIDs, writes CID column to Drugbank.csv
+├── compare.py            # Utility: compares Drugbank_Generated.csv against Drugbank.csv ground truth
 ├── Drugbank.csv          # Source data (DrugBank entries with resolved CIDs)
 ├── output.json           # Sample output from a completed run (git-ignored)
-├── .env                  # NOT committed — holds groq_token
 └── .gitignore
 ```
 
@@ -224,19 +224,16 @@ CONFIDENCE_CAP = {
 
 ## Quickstart
 
-**Prerequisites:** Python 3.10+, Groq account with API key (free tier at [console.groq.com](https://console.groq.com)).
+**Prerequisites:** Python 3.10+, [Ollama](https://ollama.com) installed and running locally, `deepseek-r1:70b` pulled (needs ~48GB VRAM for full precision — a dual RTX 4090 setup works).
 
 ```bash
 git clone https://github.com/your-username/biomedical-property-pipeline.git
 cd biomedical-property-pipeline
-pip install groq python-dotenv requests
+pip install ollama requests json-repair
+ollama pull deepseek-r1:70b
 ```
 
-Add your token to `.env`:
-
-```env
-groq_token=your_groq_api_key_here
-```
+No `.env` or API key needed — `main.py` connects to the local Ollama server via `ollama.Client()`.
 
 Run the pipeline interactively:
 
@@ -266,6 +263,14 @@ If `Drugbank.csv` is missing its `CID` column, run `db2csv.py` first. It resolve
 
 ```bash
 python db2csv.py
+```
+
+### Comparing Against Ground Truth (`compare.py`)
+
+Compares `Drugbank_Generated.csv` against `Drugbank.csv` field-by-field, aligning rows on shared `CID`. Numeric fields report bias, median error, MAE, std, and outlier count (`|err| > 2σ`); string fields report exact-match percentage (with normalisation for formulas, names, and element compositions).
+
+```bash
+python compare.py
 ```
 
 ---
@@ -308,16 +313,20 @@ Sample output for Ibuprofen (CID 5754):
 
 | Package | Purpose |
 |---|---|
-| `groq` | Groq API client for LLM1 and LLM2; `InternalServerError` for retry handling |
-| `python-dotenv` | Loads `groq_token` from `.env` |
+| `ollama` | Local Ollama Python client for LLM1 and LLM2 (`client.chat(model="deepseek-r1:70b", ...)`) |
 | `requests` | PubChem REST API calls (CID resolution + name enrichment); also used in `db2csv.py` |
+| `json-repair` | Recovers truncated/malformed JSON from LLM output as a last-resort parse fallback |
+| `pandas` | Row alignment and column comparison in `compare.py` |
+| `numpy` | Numeric error stats (bias, MAE, std, outliers) in `compare.py` |
 | `statistics` | `median()` for outlier filtering in fusion |
 | `collections` | `defaultdict` for fusion bucketing and composition accumulation |
-| `json`, `re`, `math`, `time`, `os` | Standard library |
+| `json`, `re`, `math`, `time`, `os`, `csv` | Standard library |
 
 ```bash
-pip install groq python-dotenv requests
+pip install ollama requests json-repair pandas numpy
 ```
+
+External requirement: an Ollama server running locally with `deepseek-r1:70b` pulled (`ollama pull deepseek-r1:70b`).
 
 ---
 
@@ -328,7 +337,7 @@ To add a new field (e.g. `tpsa`):
 1. **`drug_descriptors.py`** — add to `REQUIRED_SCHEMA` with a typed placeholder, `FIELD_TYPES`, and optionally `DETERMINISTIC_FIELDS`.
 2. **`fusion_config.py`** — add entries to `ABSOLUTE_THRESHOLD`, `PLAUSIBILITY_FLOOR`/`CEILING`, and `CONFIDENCE_CAP` as needed.
 
-`main.py`, `LLM1_groq.py`, `LLM2_groq.py`, and `fusion.py` all derive behaviour from the schema at runtime — no other changes required.
+`main.py`, `LLM1.py`, `LLM2.py`, and `fusion.py` all derive behaviour from the schema at runtime — no other changes required.
 
 ---
 
@@ -338,6 +347,6 @@ To add a new field (e.g. `tpsa`):
 - **LLM1 integer compliance** — despite explicit prompt instructions, the model occasionally emits floats for integer fields. `[INT-GUARD]` is the last-resort catch.
 - **SMILES validation without RDKit** — the syntactic check in `main.py` cannot detect chemically invalid SMILES that pass character-level validation. Full validation requires RDKit.
 - **Single-candidate pools** — if only one candidate survives the confidence filter, outlier removal has nothing to compare against and accepts it unconditionally.
-- **Groq free-tier rate limits** — the retry logic (3 attempts, 10 s wait) handles transient rate-limit errors; sustained rate-limiting will exhaust retries and raise `RuntimeError`.
+- **Local inference latency** — `deepseek-r1:70b` thinks by default (emits `<think>` blocks before JSON), which adds output tokens and latency per call; `num_ctx`/`num_predict` are tuned per-file to budget for this.
 - **PubChem CID fallback** — if name lookup fails, `cid` is set to `0` (a sentinel, not a valid PubChem record). Downstream consumers should treat `cid == 0` as unresolved.
 - **`secondary_accession_numbers`** — not guard-protected beyond deduplication; LLM2 may add or reorder entries freely.
