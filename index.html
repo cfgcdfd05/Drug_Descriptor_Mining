@@ -472,7 +472,7 @@
               </div>
             </div>
             <div class="node node-llm" data-node="llm1" onclick="openPanel('llm1')">
-              <span class="llm-badge">Qwen3:32b · temp 0.5</span>
+              <span class="llm-badge">deepseek-r1:70b · temp 0.0</span>
               <div class="node-title">LLM1 — Multi-candidate extraction</div>
               <div class="node-sub">Per-field <code>{value, confidence, source_type}</code> candidate lists.<br>Min 2 candidates per numeric field from distinct sources.</div>
               <div class="node-details">
@@ -527,7 +527,7 @@
               </div>
             </div>
             <div class="node node-llm" data-node="llm2" onclick="openPanel('llm2')">
-              <span class="llm-badge">Qwen3:32b · temp 0.1</span>
+              <span class="llm-badge">deepseek-r1:70b · temp 0.0</span>
               <div class="node-title">LLM2 — Gap-fill &amp; verification</div>
               <div class="node-sub">Receives fused intermediate. Fills genuinely empty fields, cross-checks composition fractions and heavy-atom count. Emits warnings for corrections.</div>
               <div class="node-details">
@@ -585,7 +585,7 @@
         </div><!-- /.flow -->
 
         <div class="legend">
-          <div class="legend-item"><div class="legend-dot" style="background:var(--llm-fill);border:1px solid var(--llm-stroke)"></div>Qwen3:32b</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--llm-fill);border:1px solid var(--llm-stroke)"></div>deepseek-r1:70b</div>
           <div class="legend-item"><div class="legend-dot" style="background:var(--fusion-fill);border:1px solid var(--fusion-stroke)"></div>Fusion</div>
           <div class="legend-item"><div class="legend-dot" style="background:var(--guard-fill);border:1px solid var(--guard-stroke)"></div>Guards</div>
           <div class="legend-item"><div class="legend-dot" style="background:var(--infra-fill);border:1px solid var(--infra-stroke)"></div>Infrastructure</div>
@@ -665,7 +665,7 @@ const PANELS = {
   },
 
   llm1: {
-    tag: 'Qwen3:32b', tagColor: '#cecbf6', tagBg: 'rgba(46,42,110,0.6)',
+    tag: 'deepseek-r1:70b', tagColor: '#cecbf6', tagBg: 'rgba(46,42,110,0.6)',
     title: 'LLM1 — Multi-candidate extraction',
     subtitle: 'The first LLM pass. Its job is breadth: collect multiple independent value candidates per field, each tagged with a confidence score and source type. It does not pick winners — Fusion does that.',
     html: `
@@ -704,9 +704,9 @@ const PANELS = {
       </div>
       <div class="panel-section">
         <div class="panel-section-title">Retry / error handling</div>
-        <div class="detail-row"><div class="label">Temperature</div><div class="value">0.5 — increased by 0.1 per JSON-parse retry (up to 1.0)</div></div>
-        <div class="detail-row"><div class="label">Retries</div><div class="value">3 attempts — server error and JSON parse failures both trigger retry</div></div>
-        <div class="detail-row"><div class="label">JSON extraction</div><div class="value">Tries last <code>&#96;&#96;&#96;json</code> block first, falls back to outermost <code>{}</code> match</div></div>
+        <div class="detail-row"><div class="label">Temperature</div><div class="value">0.0 — deterministic (top_k=1, top_p=1.0, seed=42)</div></div>
+        <div class="detail-row"><div class="label">Retries</div><div class="value">3 attempts — malformed JSON and connection errors both trigger retry; <code>num_predict</code> grows by 1024 per attempt (base 5120)</div></div>
+        <div class="detail-row"><div class="label">JSON extraction</div><div class="value">Strips <code>&lt;think&gt;</code> blocks first (R1 reasoning tokens), then direct parse → fenced <code>&#96;&#96;&#96;json</code> block → outermost <code>{}</code> match → <code>json-repair</code> as last resort</div></div>
       </div>
       <div class="info-box">LLM1 also handles schema unwrapping: if the model wraps all output under a single key (e.g. <code>"properties": {...}</code>), <code>main.py</code> detects and strips the wrapper before passing to Fusion.</div>
     `
@@ -735,9 +735,9 @@ const PANELS = {
   },
 
   llm2: {
-    tag: 'Qwen3:32b', tagColor: '#cecbf6', tagBg: 'rgba(46,42,110,0.6)',
+    tag: 'deepseek-r1:70b', tagColor: '#cecbf6', tagBg: 'rgba(46,42,110,0.6)',
     title: 'LLM2 — Gap-fill & verification',
-    subtitle: 'The second LLM pass. Temperature 0.1 — near-deterministic. Its job is narrow: fill fields that are still at schema defaults, and cross-check 3 specific consistency rules. It must not alter fused values.',
+    subtitle: 'The second LLM pass. Temperature 0.0 — fully deterministic. Its job is narrow: fill fields that are still at schema defaults, and cross-check 3 specific consistency rules. It must not alter fused values.',
     html: `
       <div class="panel-section">
         <div class="panel-section-title">Core contract</div>
